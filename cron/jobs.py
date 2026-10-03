@@ -25,7 +25,7 @@ try:
     import msvcrt
 except ImportError:  # pragma: no cover - non-Windows
     msvcrt = None
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 from hermes_constants import get_hermes_home
 from cron.constants import CLAIM_TTL_INACTIVITY_HEADROOM, FIRE_CLAIM_SKEW_SECONDS, FIRE_CLAIM_TTL_SECONDS
@@ -1172,6 +1172,12 @@ def get_timezone_migration_catchup_stats() -> Dict[str, Any]:
     }
 
 
+def _attach_wall_clock(wall: datetime, zone: Optional[tzinfo], fold: int) -> datetime:
+    """Attach ``zone`` (server-local if None) to a naive wall clock."""
+    wall = wall.replace(fold=fold)
+    return wall.replace(tzinfo=zone) if zone is not None else wall.astimezone()
+
+
 def compute_next_run(schedule: Dict[str, Any], last_run_at: Optional[str] = None) -> Optional[str]:
     """Compute the next run time for a schedule as an ISO string, or None if no more runs."""
     now = _hermes_now()
@@ -1211,8 +1217,8 @@ def compute_next_run(schedule: Dict[str, Any], last_run_at: Optional[str] = None
         # wall clock for croniter, then re-attach the zone to the result, so
         # the wall-clock hour stays correct every calendar day, including DST
         # boundaries (morning-routine 09:00 America/Toronto).
-        # Fall back to the base's own zone only when nothing is configured.
-        zone = get_timezone() or base_time.tzinfo
+        # zone is None when unconfigured: astimezone(None) is server-local, like system cron.
+        zone = get_timezone()
         base_wall = base_time.astimezone(zone).replace(tzinfo=None)
         it = croniter(expr, base_wall)
         # Strictly-after guard for the DST fall-back hour (qwen-code#11723 class):
@@ -1226,11 +1232,11 @@ def compute_next_run(schedule: Dict[str, Any], last_run_at: Optional[str] = None
         next_wall = it.get_next(datetime)
         for _ in range(2):
             for fold in (0, 1):
-                candidate = next_wall.replace(tzinfo=zone, fold=fold)
+                candidate = _attach_wall_clock(next_wall, zone, fold)
                 if candidate.timestamp() > base_ts:
                     return candidate.isoformat()
             next_wall = it.get_next(datetime)
-        return next_wall.replace(tzinfo=zone).isoformat()
+        return _attach_wall_clock(next_wall, zone, 0).isoformat()
     return None
 
 

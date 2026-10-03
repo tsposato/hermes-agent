@@ -21,6 +21,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
+import time
+
 import pytest
 
 
@@ -39,6 +41,16 @@ def _reset_migration_counters(monkeypatch):
     monkeypatch.setattr(J, "_timezone_migration_catchups", 0)
     monkeypatch.setattr(J, "_timezone_migration_catchups_recent", [])
     yield
+
+
+@pytest.fixture(autouse=True)
+def _server_in_brussels(monkeypatch):
+    """No timezone is configured, so cron uses the server-local zone."""
+    monkeypatch.setenv("TZ", "Europe/Brussels")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
 
 
 # Europe/Brussels is +02:00 on this date; the legacy row was written by a
