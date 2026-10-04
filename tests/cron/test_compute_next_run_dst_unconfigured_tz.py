@@ -53,3 +53,30 @@ def test_full_year_walk_never_drifts(melbourne_server_local):
         nxt = compute_next_run(MORNING, last_run_at=last.isoformat())
         assert _wall(nxt) == (7, 30), f"drift after {last.isoformat()}: {nxt}"
         last = datetime.fromisoformat(nxt)
+
+
+@pytest.fixture
+def newyork_server_local(monkeypatch):
+    """Server-local zone = America/New_York, Hermes ``timezone`` unset."""
+    monkeypatch.delenv("HERMES_TIMEZONE", raising=False)
+    monkeypatch.setenv("TZ", "America/New_York")
+    time.tzset()
+    hermes_time.reset_cache()
+    monkeypatch.setattr("cron.jobs.get_timezone", lambda: None)
+    yield
+    monkeypatch.undo()
+    time.tzset()
+    hermes_time.reset_cache()
+
+
+def test_gap_occurrence_matches_expr_with_fixed_offset(newyork_server_local):
+    """A skipped 02:30 stored as 03:30-04:00 must not look stale, or the due scan drops the fire."""
+    from cron.jobs import _cron_next_run_matches_expr
+
+    gap = {"kind": "cron", "expr": "30 2 * * *"}
+    stored = datetime.fromisoformat("2026-03-08T03:30:00-04:00")
+    assert type(stored.tzinfo) is timezone
+    assert _cron_next_run_matches_expr(gap, stored)
+    # a genuinely off-lattice instant is still reported stale
+    assert not _cron_next_run_matches_expr(gap, stored + timedelta(hours=1))
+    assert not _cron_next_run_matches_expr(gap, stored.replace(minute=45))

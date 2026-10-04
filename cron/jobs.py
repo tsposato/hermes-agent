@@ -1103,7 +1103,16 @@ def _cron_next_run_matches_expr(schedule: Dict[str, Any], next_run_dt: datetime)
         # Last occurrence at-or-before the instant: base one second past it so an exact hit is
         # included, then compare at second granularity (croniter is second-precision).
         prev = croniter(str(expr), next_run_dt + timedelta(seconds=1)).get_prev(datetime)
-        return abs((prev - next_run_dt).total_seconds()) < 1.0
+        if abs((prev - next_run_dt).total_seconds()) < 1.0:
+            return True
+        if type(next_run_dt.tzinfo) is timezone:
+            # A fixed offset hides DST gaps from croniter (02:30 is stored as 03:30-04:00 on
+            # spring-forward day), so match on the server-local wall clock.
+            wall = next_run_dt.astimezone().replace(tzinfo=None)
+            prev_wall = croniter(str(expr), wall + timedelta(seconds=1)).get_prev(datetime)
+            mapped = _attach_wall_clock(prev_wall, None, 0)
+            return abs(mapped.timestamp() - next_run_dt.timestamp()) < 1.0
+        return False
     except Exception:
         return True
 
